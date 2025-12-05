@@ -1,0 +1,165 @@
+================================================================================
+  BUSINESS CENTRAL CONTAINER - NUCLEAR CLEAN (STEP 4) - QUICK REFERENCE
+================================================================================
+
+WHEN YOU SEE THIS ERROR:
+  Error: hcsshim::PrepareLayer failed in Win32: The container image contains
+         a layer with an unrecognized format. (0xc0370112)
+
+→ RUN THIS:
+
+================================================================================
+METHOD 1: EASIEST (DOUBLE-CLICK)
+================================================================================
+  Navigate to: C:\MILBAI\Claude\
+  Double-click: NuclearClean.bat
+
+  Follow the prompts and wait 3-6 minutes.
+
+
+================================================================================
+METHOD 2: POWERSHELL
+================================================================================
+  Open PowerShell as Administrator
+
+  cd C:\MILBAI\Claude
+  .\BC-NuclearClean.ps1
+
+  Follow the prompts and wait 3-6 minutes.
+
+
+================================================================================
+METHOD 3: MANUAL COMMANDS (If script unavailable)
+================================================================================
+
+  Step 1 - Stop all containers:
+  ────────────────────────────
+  docker stop $(docker ps -aq)
+
+
+  Step 2 - Remove all containers:
+  ───────────────────────────────
+  docker rm $(docker ps -aq)
+
+
+  Step 3 - PRUNE SYSTEM (THIS FIXES THE ERROR):
+  ──────────────────────────────────────────────
+  docker system prune -a --volumes
+
+  ⚠ This takes 2-5 minutes
+  ⚠ Removes corrupted layer cache
+
+
+  Step 4 - Restart Docker service:
+  ────────────────────────────────
+  Restart-Service docker -Force
+
+  Wait 10 seconds for restart
+
+
+================================================================================
+WHAT GETS DELETED
+================================================================================
+
+  ✓ All containers (running and stopped)
+  ✓ All unused images
+  ✓ All unused networks
+  ✓ All unused volumes
+  ✓ Layer cache (← THIS FIXES YOUR ERROR)
+
+  ✗ Docker settings
+  ✗ Windows files
+  ✗ Network configuration
+
+
+================================================================================
+AFTER NUCLEAR CLEAN - NEXT STEPS
+================================================================================
+
+  1. Verify Docker is working:
+     ────────────────────────
+     docker ps
+     docker images
+
+  2. Pull fresh base image:
+     ──────────────────────
+     docker pull mcr.microsoft.com/windows/servercore:ltsc2022
+
+  3. Pull Business Central image:
+     ───────────────────────────
+     docker pull mcr.microsoft.com/businesscentral/sandbox:latest
+
+  4. Create new container:
+     ────────────────────
+     Using BcContainerHelper:
+       New-BcContainer -containerName "mybc" `
+                       -imageName "mcr.microsoft.com/businesscentral/sandbox:latest"
+
+     Or raw Docker:
+       docker run -it mcr.microsoft.com/businesscentral/sandbox:latest powershell
+
+
+================================================================================
+TIMING
+================================================================================
+
+  Stop containers:     ~5 seconds
+  Remove containers:   ~5 seconds
+  Prune system:        2-5 minutes    ← Longest step
+  Restart Docker:      ~10 seconds
+  ─────────────────────────────────
+  TOTAL:               3-6 minutes
+
+
+================================================================================
+IF SOMETHING GOES WRONG
+================================================================================
+
+  Docker won't start?
+  ──────────────────
+  → Restart Docker Desktop manually
+  → Or restart Windows
+
+  "Access Denied" error?
+  ──────────────────────
+  → Run PowerShell as Administrator
+
+  Prune command hangs?
+  ────────────────────
+  → Press Ctrl+C
+  → Restart Docker Desktop
+  → Try again
+
+
+================================================================================
+WHY THIS WORKS
+================================================================================
+
+  The layer format error happens because Docker's layer cache gets corrupted.
+
+  Your setup:
+    1. Corrupted layer cache detected
+    2. Container creation fails
+    ✓ docker system prune -a --volumes
+    3. Old corrupted cache deleted
+    4. Fresh clean layers created
+    5. Containers work again
+
+
+================================================================================
+REFERENCE LINKS
+================================================================================
+
+  Docker documentation:
+  https://docs.docker.com/engine/reference/commandline/system_prune/
+
+  Business Central containers:
+  https://docs.microsoft.com/en-us/dynamics365/business-central/
+
+  BcContainerHelper:
+  https://github.com/microsoft/BcContainerHelper
+
+
+================================================================================
+Created by: Freddy Kristiansen & Tobias Fenster
+Based on: Microsoft Development Center Copenhagen best practices
