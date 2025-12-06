@@ -384,15 +384,8 @@ function Show-NonMicrosoftApps {
             Write-Host "[→] Querying apps in container: $containerName" -ForegroundColor Gray
             Write-Host ""
 
-            # Use Invoke-ScriptInBcContainer to run Get-NavAppInfo inside the container
-            $scriptBlock = {
-                Get-NavAppInfo -ServerInstance BC -Tenant default -TenantSpecificProperties |
-                Where-Object { $_.Publisher -ne 'Microsoft' } |
-                Select-Object -Property Publisher, Name, Version, AppId, IsPublished, IsInstalled |
-                Sort-Object Publisher, Name
-            }
-
-            $apps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock
+            # Get non-Microsoft apps using BcContainerHelper wrapper
+            $apps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
             if ($apps) {
                 Write-Host "Found $($apps.Count) non-Microsoft app(s):" -ForegroundColor Green
@@ -433,15 +426,8 @@ function Uninstall-NonMicrosoftApps {
         Write-Host "[→] Querying non-Microsoft apps in container: $containerName" -ForegroundColor Gray
         Write-Host ""
 
-        # Get non-Microsoft apps from container
-        $scriptBlock = {
-            Get-NavAppInfo -ServerInstance BC -Tenant default -TenantSpecificProperties |
-            Where-Object { $_.Publisher -ne 'Microsoft' } |
-            Select-Object -Property Publisher, Name, Version, AppId, IsPublished, IsInstalled |
-            Sort-Object Publisher, Name
-        }
-
-        $apps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock
+        # Get non-Microsoft apps from container using BcContainerHelper wrapper
+        $apps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
         if (-not $apps) {
             Write-Host "[!] No non-Microsoft apps found in container" -ForegroundColor Yellow
@@ -600,7 +586,7 @@ function Uninstall-NonMicrosoftApps {
         Write-Host ""
 
         try {
-            $remainingApps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock
+            $remainingApps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' }
 
             if ($remainingApps) {
                 $remainingCount = @($remainingApps).Count
@@ -682,13 +668,6 @@ function Install-AppsFromFolder {
         Write-Host "  • $fileName" -ForegroundColor White
     }
 
-    # Ask about skipVerification
-    Write-Host ""
-    Write-Host "Skip code signing verification? (Y/N, default: Y)" -ForegroundColor Cyan
-    Write-Host "(Recommended: Y for development/test containers)" -ForegroundColor Gray
-    $skipVerif = Read-Host "Skip verification"
-    $skipVerification = [string]::IsNullOrWhiteSpace($skipVerif) -or $skipVerif.ToUpper() -eq 'Y'
-
     # Ask about unpublishing old versions
     Write-Host ""
     Write-Host "Unpublish old versions after successful upgrade? (Y/N, default: Y)" -ForegroundColor Cyan
@@ -701,13 +680,9 @@ function Install-AppsFromFolder {
     Write-Host ""
 
     try {
-        # Get currently installed/published apps
-        $scriptBlock = {
-            Get-NavAppInfo -ServerInstance BC -Tenant default -TenantSpecificProperties |
-            Select-Object -Property AppId, Name, Publisher, Version, IsPublished, IsInstalled
-        }
-
-        $currentApps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock
+        # Get currently installed/published apps using BcContainerHelper wrapper
+        Write-Host "[→] Retrieving currently installed apps..." -ForegroundColor Gray
+        $currentApps = Get-BcContainerAppInfo -containerName $containerName
 
         # Sort apps by dependencies using BcContainerHelper
         $sortedApps = Sort-AppFilesByDependencies -containerName $containerName -appFiles $appFiles
@@ -715,7 +690,16 @@ function Install-AppsFromFolder {
         # Analyze each app to determine action
         $installPlan = @()
         foreach ($appFile in $sortedApps) {
-            $appInfo = Get-NavAppInfo -Path $appFile
+            # Get app metadata from file using BcContainerHelper (no modules required)
+            $appJson = Get-AppJsonFromAppFile -appFile $appFile
+            # Convert to compatible object with standard property names
+            $appInfo = [PSCustomObject]@{
+                AppId = $appJson.id
+                Name = $appJson.name
+                Publisher = $appJson.publisher
+                Version = $appJson.version
+            }
+
             $existingApp = $currentApps | Where-Object {
                 $_.AppId -eq $appInfo.AppId -and $_.IsInstalled -eq $true
             }
@@ -768,9 +752,8 @@ function Install-AppsFromFolder {
         # Confirmation
         Write-Host ""
         Write-Host "Settings:" -ForegroundColor Yellow
-        Write-Host "  Container:          $containerName" -ForegroundColor White
-        Write-Host "  Skip verification:  $(if ($skipVerification) { 'Yes' } else { 'No' })" -ForegroundColor White
-        Write-Host "  Unpublish old:      $(if ($unpublishOld) { 'Yes' } else { 'No' })" -ForegroundColor White
+        Write-Host "  Container:     $containerName" -ForegroundColor White
+        Write-Host "  Unpublish old: $(if ($unpublishOld) { 'Yes' } else { 'No' })" -ForegroundColor White
         Write-Host ""
         Write-Host "Type 'YES' to proceed:" -ForegroundColor Cyan
         $confirm = Read-Host "Confirm"
@@ -818,7 +801,7 @@ function Install-AppsFromFolder {
                 $publishParams = @{
                     containerName = $containerName
                     appFile = $plan.AppFile
-                    skipVerification = $skipVerification
+                    skipVerification = $true
                     sync = $true
                 }
 
@@ -918,14 +901,7 @@ function Install-AppsFromFolder {
             Write-Host ""
 
             try {
-                $scriptBlock = {
-                    Get-NavAppInfo -ServerInstance BC -Tenant default -TenantSpecificProperties |
-                    Where-Object { $_.Publisher -ne 'Microsoft' } |
-                    Select-Object -Property Publisher, Name, Version, IsPublished, IsInstalled |
-                    Sort-Object Publisher, Name
-                }
-
-                $installedApps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock
+                $installedApps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
                 if ($installedApps) {
                     $installedCount = @($installedApps).Count
