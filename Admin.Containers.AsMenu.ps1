@@ -27,6 +27,38 @@
 
 Clear-Host
 
+# Ensure BC PowerShell modules are loaded for Get-BcContainerAppInfo compatibility
+# This prevents "Get-NavAppInfo not recognized" errors in containers
+try {
+    Write-Host "[→] Initializing Business Central modules..." -ForegroundColor Gray
+    $moduleLoaded = $false
+
+    # Try to load Microsoft.Dynamics.Nav.Apps.Management first (older modules)
+    if (-not (Get-Command Get-NavAppInfo -ErrorAction SilentlyContinue)) {
+        try {
+            Import-Module Microsoft.Dynamics.Nav.Apps.Management -ErrorAction SilentlyContinue
+            $moduleLoaded = $true
+        }
+        catch {
+            # Module not available, BcContainerHelper will handle internally
+        }
+    }
+    else {
+        $moduleLoaded = $true
+    }
+
+    if ($moduleLoaded) {
+        Write-Host "[✓] BC modules ready" -ForegroundColor Green
+    }
+    else {
+        Write-Host "[i] BC modules not found locally - BcContainerHelper will use container modules" -ForegroundColor Cyan
+    }
+}
+catch {
+    # Non-critical, BcContainerHelper can continue
+    Write-Host "[i] Module loading skipped" -ForegroundColor Gray
+}
+
 # Container configuration - prompt user to select container
 Write-Host "╔════════════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║  BC Container Admin - Select Container                                 ║" -ForegroundColor Cyan
@@ -81,6 +113,43 @@ if ([string]::IsNullOrWhiteSpace($containerName)) {
     Write-Host "ERROR: Container name cannot be empty!" -ForegroundColor Red
     pause
     exit 1
+}
+
+# Helper function to safely get container app info with proper module loading
+function Get-ContainerAppsInfo {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$containerName
+    )
+
+    try {
+        # Try using Get-BcContainerAppInfo with implicit module loading
+        $apps = Get-BcContainerAppInfo -containerName $containerName -ErrorAction Stop
+        return $apps
+    }
+    catch {
+        # Fallback: Ensure modules are loaded in container context
+        try {
+            Write-Host "[i] Attempting module-aware app query..." -ForegroundColor Gray
+            $scriptBlock = {
+                # Load required modules inside container
+                if (-not (Get-Command Get-NavAppInfo -ErrorAction SilentlyContinue)) {
+                    Get-Module | Where-Object { $_.Name -like '*Nav*' -or $_.Name -like '*Business*Central*' } | Import-Module -Force -ErrorAction SilentlyContinue
+                }
+
+                # Query apps
+                Get-NavAppInfo -ServerInstance BC -Tenant default -TenantSpecificProperties |
+                Select-Object -Property AppId, Name, Publisher, Version, IsPublished, IsInstalled
+            }
+
+            $apps = Invoke-ScriptInBcContainer -containerName $containerName -scriptblock $scriptBlock -ErrorAction Stop
+            return $apps
+        }
+        catch {
+            Write-Host "[!] Failed to retrieve app information: $($_.Exception.Message)" -ForegroundColor Red
+            throw
+        }
+    }
 }
 
 function Show-Menu {
@@ -384,8 +453,8 @@ function Show-NonMicrosoftApps {
             Write-Host "[→] Querying apps in container: $containerName" -ForegroundColor Gray
             Write-Host ""
 
-            # Get non-Microsoft apps using BcContainerHelper wrapper
-            $apps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
+            # Get non-Microsoft apps using helper function
+            $apps = Get-ContainerAppsInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
             if ($apps) {
                 Write-Host "Found $($apps.Count) non-Microsoft app(s):" -ForegroundColor Green
@@ -426,8 +495,8 @@ function Uninstall-NonMicrosoftApps {
         Write-Host "[→] Querying non-Microsoft apps in container: $containerName" -ForegroundColor Gray
         Write-Host ""
 
-        # Get non-Microsoft apps from container using BcContainerHelper wrapper
-        $apps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
+        # Get non-Microsoft apps from container using helper function
+        $apps = Get-ContainerAppsInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
         if (-not $apps) {
             Write-Host "[!] No non-Microsoft apps found in container" -ForegroundColor Yellow
@@ -586,7 +655,7 @@ function Uninstall-NonMicrosoftApps {
         Write-Host ""
 
         try {
-            $remainingApps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' }
+            $remainingApps = Get-ContainerAppsInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' }
 
             if ($remainingApps) {
                 $remainingCount = @($remainingApps).Count
@@ -680,9 +749,9 @@ function Install-AppsFromFolder {
     Write-Host ""
 
     try {
-        # Get currently installed/published apps using BcContainerHelper wrapper
+        # Get currently installed/published apps using helper function
         Write-Host "[→] Retrieving currently installed apps..." -ForegroundColor Gray
-        $currentApps = Get-BcContainerAppInfo -containerName $containerName
+        $currentApps = Get-ContainerAppsInfo -containerName $containerName
 
         # Sort apps by dependencies using BcContainerHelper
         $sortedApps = Sort-AppFilesByDependencies -containerName $containerName -appFiles $appFiles
@@ -901,7 +970,7 @@ function Install-AppsFromFolder {
             Write-Host ""
 
             try {
-                $installedApps = Get-BcContainerAppInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
+                $installedApps = Get-ContainerAppsInfo -containerName $containerName | Where-Object { $_.Publisher -ne 'Microsoft' } | Sort-Object Publisher, Name
 
                 if ($installedApps) {
                     $installedCount = @($installedApps).Count
